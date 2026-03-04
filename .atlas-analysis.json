@@ -1,0 +1,55 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Hooks Trampoline",
+  "projectDescription": "A dedicated trampoline contract for executing user-specified hooks in CoW Protocol settlements.",
+  "theme": "aspen",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#121212",
+  "darkColor": "#c6c6c6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["introduction", "how-it-works"]
+          },
+          {
+            "group": "Getting Started",
+            "pages": ["installation", "usage"]
+          },
+          {
+            "group": "Architecture",
+            "pages": ["architecture/security", "architecture/gas-management", "architecture/settlement-flow"]
+          },
+          {
+            "group": "Development",
+            "pages": ["development/testing", "development/deployment"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Contract API",
+            "pages": ["api/hooks-trampoline", "api/hook-struct", "api/errors"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Executes hooks from unprivileged context to protect settlement contract",
+    "Gas-limited execution to prevent INVALID opcode gas consumption",
+    "Allows hook reverts without failing the entire settlement",
+    "Settlement-only access control for secure hook execution"
+  ],
+  "publicApiSurface": [
+    "execute(Hook[] calldata hooks)",
+    "Hook struct (target, callData, gasLimit)",
+    "NotASettlement() error",
+    "settlement immutable address"
+  ]
+}
