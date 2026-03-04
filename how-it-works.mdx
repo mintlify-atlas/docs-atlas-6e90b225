@@ -1,0 +1,219 @@
+---
+title: How It Works
+description: Understanding the architecture and protection mechanisms of Hooks Trampoline
+---
+
+## Overview
+
+Hooks Trampoline is a critical security component in CoW Protocol that enables traders to execute custom Ethereum calls atomically within their settlement transactions—without compromising the protocol's security or stability.
+
+**Hooks** are a CoW Protocol feature that allows traders to specify custom Ethereum calls as part of their order. These calls execute atomically in the same transaction as the trade, enabling powerful use cases like conditional orders, automated portfolio rebalancing, and multi-step DeFi interactions.
+
+However, executing arbitrary user code within a settlement transaction introduces significant risks. The Hooks Trampoline contract acts as a protective intermediary that isolates user hooks from the privileged settlement contract context while ensuring that poorly configured hooks cannot disrupt settlements.
+
+## The Problem: Why Trampoline is Needed
+
+Without the Hooks Trampoline, executing user hooks directly from the settlement contract would create two critical vulnerabilities:
+
+### 1. Privileged Context Exploitation
+
+The CoW Protocol settlement contract accumulates trading fees and holds funds. If user hooks executed from this privileged context, malicious users could trivially steal funds by specifying hooks like:
+
+```solidity
+// Without trampoline, this would steal accumulated fees
+ERC20(token).transfer(attacker, settlementContract.balance)
+```
+
+### 2. Settlement Disruption
+
+User hooks could disrupt or sabotage entire settlements in two ways:
+
+**Gas Griefing**: When the settlement contract calls interactions, it forwards all remaining gas (`gasleft()`). If a hook reverts with an `INVALID` opcode, it consumes 63/64ths of the total transaction gas, making settlements extremely expensive for no reason.
+
+**Cascading Failures**: If a hook reverts and the revert is not caught, all other orders in the settlement batch would fail to execute, effectively DoS-ing legitimate traders.
+
+## The Solution: Three-Layer Protection
+
+The Hooks Trampoline implements three fundamental protections to address these vulnerabilities:
+
+### 1. Unprivileged Context
+
+All hooks execute from the `HooksTrampoline` contract's context, not the settlement contract. This means hooks have no access to the settlement contract's accumulated fees or privileged state.
+
+```solidity
+// From HooksTrampoline.sol:9-22
+contract HooksTrampoline {
+    /// The address of the CoW Protocol settlement contract
+    address public immutable settlement;
+
+    constructor(address settlement_) {
+        settlement = settlement_;
+    }
+    
+    modifier onlySettlement() {
+        if (msg.sender != settlement) {
+            revert NotASettlement();
+        }
+        _;
+    }
+}
+```
+
+When a hook executes, `msg.sender` is the `HooksTrampoline` address—never the settlement contract. This architectural separation ensures complete isolation of privileges.
+
+<Note>
+Hook implementations can verify they're being called during a settlement by checking:
+```solidity
+require(msg.sender == HOOKS_TRAMPOLINE_ADDRESS, "not a settlement");
+```
+</Note>
+
+### 2. Gas Limits
+
+Each hook specifies a `gasLimit` that caps the maximum gas consumption. This prevents `INVALID` opcodes or gas-intensive operations from consuming excessive gas.
+
+```solidity
+// From HooksTrampoline.sol:11-15
+struct Hook {
+    address target;
+    bytes callData;
+    uint256 gasLimit;  // Caps gas consumption per hook
+}
+```
+
+The trampoline enforces this limit during execution:
+
+```solidity
+// From HooksTrampoline.sol:63-71
+Hook calldata hook;
+for (uint256 i; i < hooks.length; ++i) {
+    hook = hooks[i];
+    // Calculate gas available accounting for EVM's 63/64 rule
+    uint256 forwardedGas = gasleft() * 63 / 64;
+    if (forwardedGas < hook.gasLimit) {
+        revertByWastingGas();
+    }
+    
+    (bool success,) = hook.target.call{gas: hook.gasLimit}(hook.callData);
+}
+```
+
+<Info>
+The gas limit calculation accounts for the EVM's 63/64 forwarding rule. When a contract makes a call, it automatically reserves 1/64th of remaining gas for post-call operations. The trampoline checks that sufficient gas exists before attempting the hook call.
+</Info>
+
+### 3. Revert Tolerance
+
+The trampoline explicitly allows hooks to revert without affecting the settlement. This is critical for preventing a single failed hook from disrupting an entire batch of orders.
+
+```solidity
+// From HooksTrampoline.sol:70-74
+(bool success,) = hook.target.call{gas: hook.gasLimit}(hook.callData);
+
+// In order to prevent custom hooks from DoS-ing settlements, we
+// explicitly allow them to revert.
+success;  // Intentionally ignored
+```
+
+The `success` value is read (to avoid compiler warnings) but deliberately ignored. Whether a hook succeeds or reverts, the settlement continues executing.
+
+<Warning>
+Hook developers should design their hooks to handle failures gracefully. A reverting hook will not prevent the trade from executing, but it also won't achieve its intended effect. Consider implementing retry logic or fallback mechanisms in your application layer.
+</Warning>
+
+## Settlement Flow
+
+The following diagram illustrates how hooks integrate into the CoW Protocol settlement process:
+
+```mermaid
+sequenceDiagram
+    participant Solver
+    participant Settlement
+    participant HooksTrampoline
+    participant Hook
+
+    Solver->>Settlement: settle
+    activate Settlement
+
+    Settlement->>HooksTrampoline: execute
+    activate HooksTrampoline
+    loop pre-hooks
+        HooksTrampoline->>Hook: call
+        activate Hook
+
+        Hook->>HooksTrampoline: return/revert
+        deactivate Hook
+    end
+    HooksTrampoline->>Settlement: return
+    deactivate HooksTrampoline
+
+    Settlement->>Settlement: swap
+
+    Settlement->>HooksTrampoline: execute
+    activate HooksTrampoline
+    loop post-hooks
+        HooksTrampoline->>Hook: call
+        activate Hook
+
+        Hook->>HooksTrampoline: return/revert
+        deactivate Hook
+    end
+    HooksTrampoline->>Settlement: return
+    deactivate HooksTrampoline
+
+
+    Settlement->>Solver: return
+    deactivate Settlement
+```
+
+### Settlement Phases
+
+**Pre-hooks**: Execute before the swap. These are ideal for:
+- Token approvals
+- Position setup
+- Conditional checks
+- Pre-trade state modifications
+
+**Swap**: The actual token exchange occurs in the settlement contract.
+
+**Post-hooks**: Execute after the swap. These are ideal for:
+- Staking received tokens
+- Claiming rewards
+- Triggering follow-up actions
+- State cleanup
+
+<Note>
+Both pre-hooks and post-hooks execute atomically within the same transaction. If the settlement reverts for any reason (e.g., slippage protection), all hook effects are also reverted.
+</Note>
+
+## Edge Case: Gas Estimation
+
+The trampoline includes a special mechanism to handle gas estimation edge cases with certain node implementations:
+
+```solidity
+// From HooksTrampoline.sol:79-90
+/// @dev Burn all gas forwarded to the call. It's used to trigger an
+/// out-of-gas error on revert, which some node implementations (notably
+/// Nethermind) need to properly estimate the gas limit of a transaction
+function revertByWastingGas() private pure {
+    while (true) {}
+}
+```
+
+When a hook doesn't have sufficient gas to execute, the trampoline deliberately wastes all remaining gas. This ensures that Nethermind and similar nodes correctly estimate gas requirements through `eth_estimateGas`, preventing estimation failures for transactions that consume less gas when reverting than when succeeding.
+
+<Info>
+This mechanism is called when `forwardedGas < hook.gasLimit`, ensuring that solvers and users receive accurate gas estimates even when hooks cannot execute due to insufficient gas.
+</Info>
+
+## Security Guarantees
+
+The Hooks Trampoline provides the following security guarantees:
+
+1. **Privilege Isolation**: Hooks never execute with settlement contract privileges
+2. **Gas Protection**: No single hook can consume unlimited gas
+3. **Fault Isolation**: Hook failures cannot disrupt settlements or affect other orders
+4. **Settlement Verification**: Hooks can cryptographically verify they're executing within a legitimate settlement
+5. **Deterministic Execution**: Hook execution order and gas limits are explicitly specified and enforced
+
+These protections make it safe to incorporate arbitrary user-defined logic into the CoW Protocol settlement process while maintaining the security and reliability that traders depend on.

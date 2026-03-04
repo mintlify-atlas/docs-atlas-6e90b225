@@ -1,0 +1,194 @@
+---
+title: Installation
+description: Install and deploy Hooks Trampoline for CoW Protocol
+---
+
+Hooks Trampoline is a smart contract that enables safe execution of user-specified hooks in CoW Protocol settlements. This guide covers installation, compilation, and deployment.
+
+## Prerequisites
+
+Before installing Hooks Trampoline, ensure you have:
+
+- [Foundry](https://book.getfoundry.sh/) installed
+- A CoW Protocol settlement contract address for deployment
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Hooks Trampoline repository to your local machine:
+    
+    ```bash
+    git clone https://github.com/cowprotocol/hooks-trampoline.git
+    cd hooks-trampoline
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install Solidity dependencies using Foundry:
+    
+    ```bash
+    forge install
+    ```
+    
+    This will install all required libraries as specified in the project configuration.
+  </Step>
+
+  <Step title="Build the contracts">
+    Compile the smart contracts:
+    
+    ```bash
+    forge build
+    ```
+    
+    The contracts are compiled with the following settings (from `foundry.toml`):
+    - Solidity version: `0.8.20`
+    - EVM version: `shanghai`
+    - Optimizer: enabled with `1000000` runs
+  </Step>
+
+  <Step title="Run tests">
+    Verify the installation by running the test suite:
+    
+    ```bash
+    forge test
+    ```
+    
+    All tests should pass before proceeding to deployment.
+  </Step>
+</Steps>
+
+## Deployment
+
+Hooks Trampoline can be deployed using either Foundry's forge script or Cannon for multi-chain deployments.
+
+### Using Forge Script
+
+The `HooksTrampoline` constructor requires a single parameter: the address of the CoW Protocol settlement contract.
+
+<CodeGroup>
+```solidity Constructor Signature
+constructor(address settlement_)
+```
+
+```bash Deploy Command
+forge create src/HooksTrampoline.sol:HooksTrampoline \
+  --constructor-args <SETTLEMENT_ADDRESS> \
+  --rpc-url <YOUR_RPC_URL> \
+  --private-key <YOUR_PRIVATE_KEY>
+```
+
+```bash Deploy with Verification
+forge create src/HooksTrampoline.sol:HooksTrampoline \
+  --constructor-args <SETTLEMENT_ADDRESS> \
+  --rpc-url <YOUR_RPC_URL> \
+  --private-key <YOUR_PRIVATE_KEY> \
+  --etherscan-api-key <YOUR_API_KEY> \
+  --verify
+```
+</CodeGroup>
+
+<Note>
+  Replace `<SETTLEMENT_ADDRESS>` with the actual CoW Protocol settlement contract address for your target network.
+</Note>
+
+### Using Cannon for Deployment
+
+Cannon provides a more robust deployment workflow with predictable addresses and multi-chain support.
+
+<Steps>
+  <Step title="Install Cannon dependencies">
+    ```bash
+    yarn install
+    ```
+  </Step>
+
+  <Step title="Configure deployment settings">
+    The deployment is configured in `cannonfile.toml`:
+    
+    ```toml cannonfile.toml
+    name = "cow-hooks-trampoline"
+    version = "1.0.0"
+
+    [var.pkg]
+    cowSettlementPkg = "cow-settlement:2.0.2"
+
+    [pull.cow]
+    source = "<%= settings.cowSettlementPkg %>"
+
+    [var.main]
+    salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+    cowSettlement = "<%= cow.Settlement.address %>"
+
+    [deploy.HooksTrampoline]
+    artifact = "HooksTrampoline"
+    create2 = true
+    ifExists = "continue"
+    salt = "<%= settings.salt %>"
+    args = ["<%= settings.cowSettlement %>"]
+    ```
+    
+    <Note>
+      The configuration automatically pulls the settlement address from the `cow-settlement` package, ensuring compatibility.
+    </Note>
+  </Step>
+
+  <Step title="Build the Cannon package">
+    Generate the deployment artifact:
+    
+    ```bash
+    yarn build:cannon
+    ```
+    
+    This creates a deployment manifest with:
+    - Compiled contract ABIs
+    - Predicted deployment addresses (using CREATE2)
+    - Solidity input JSON
+    - Default configuration settings
+  </Step>
+
+  <Step title="Publish the package (optional)">
+    To publish to Cannon's registry:
+    
+    ```bash
+    yarn cannon:publish
+    ```
+    
+    <Warning>
+      Publishing requires:
+      - Permissions on the `cow-settlement` package
+      - 0.0025 ETH + gas fees on Optimism Mainnet
+    </Warning>
+  </Step>
+</Steps>
+
+## Deployment Verification
+
+After deployment, verify your Hooks Trampoline contract:
+
+<CodeGroup>
+```bash Check Settlement Address
+cast call <TRAMPOLINE_ADDRESS> "settlement()" --rpc-url <YOUR_RPC_URL>
+```
+
+```bash Verify on Etherscan
+forge verify-contract \
+  <TRAMPOLINE_ADDRESS> \
+  src/HooksTrampoline.sol:HooksTrampoline \
+  --constructor-args $(cast abi-encode "constructor(address)" <SETTLEMENT_ADDRESS>) \
+  --etherscan-api-key <YOUR_API_KEY> \
+  --chain-id <CHAIN_ID>
+```
+</CodeGroup>
+
+## Network Addresses
+
+For production deployments, refer to the [cowprotocol/deployments](https://github.com/cowprotocol/deployments) repository or the [cow-omnibus package on Cannon Explorer](https://usecannon.com/packages/cow-omnibus) for official contract addresses.
+
+## Next Steps
+
+Now that you have deployed Hooks Trampoline, learn how to use it in your CoW Protocol integrations:
+
+<Card title="Usage Guide" icon="code" href="/usage">
+  Learn how to create and execute hooks with Hooks Trampoline
+</Card>

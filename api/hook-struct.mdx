@@ -1,0 +1,217 @@
+---
+title: "Hook Struct"
+description: "Specification for the Hook struct used in HooksTrampoline"
+---
+
+The `Hook` struct defines the structure for user-specified hooks that execute during CoW Protocol settlements.
+
+## Definition
+
+```solidity
+struct Hook {
+    address target;
+    bytes callData;
+    uint256 gasLimit;
+}
+```
+
+The `Hook` struct is defined within the `HooksTrampoline` contract and specifies all parameters needed to execute a single hook call.
+
+## Fields
+
+<ParamField path="target" type="address" required>
+  The address of the contract to call. This is the recipient of the hook execution.
+  
+  **Requirements:**
+  - Must be a valid Ethereum address
+  - Can be an EOA (Externally Owned Account) or contract address
+  - The call will be made regardless of whether code exists at this address
+</ParamField>
+
+<ParamField path="callData" type="bytes" required>
+  The call data to send to the target address. This contains the encoded function signature and parameters.
+  
+  **Requirements:**
+  - Can be empty (`bytes("")`) for simple transfers
+  - Should be ABI-encoded for contract function calls
+  - Use `abi.encodeWithSignature()` or `abi.encodeWithSelector()` to construct
+</ParamField>
+
+<ParamField path="gasLimit" type="uint256" required>
+  The maximum amount of gas to forward to the hook call.
+  
+  **Requirements:**
+  - Must be sufficient for the hook's execution
+  - Should account for the 63/64 gas forwarding rule
+  - If insufficient gas remains to meet this limit, the entire `execute()` call reverts
+  - Setting too high may cause reversion; setting too low may cause the hook to fail
+</ParamField>
+
+## Usage Examples
+
+### Basic Hook Construction
+
+```solidity
+// Create a hook to call a simple function
+Hook memory hook = Hook({
+    target: 0x1234567890123456789012345678901234567890,
+    callData: abi.encodeWithSignature("afterTrade()"),
+    gasLimit: 50000
+});
+```
+
+### Hook with Parameters
+
+```solidity
+// Create a hook with function parameters
+Hook memory hook = Hook({
+    target: rewardsContract,
+    callData: abi.encodeWithSignature(
+        "distributeRewards(address,uint256)",
+        trader,
+        rewardAmount
+    ),
+    gasLimit: 100000
+});
+```
+
+### Multiple Hooks Array
+
+```solidity
+// Create an array of hooks for sequential execution
+Hook[] memory hooks = new Hook[](3);
+
+hooks[0] = Hook({
+    target: priceOracle,
+    callData: abi.encodeWithSignature("updatePrice(address)", token),
+    gasLimit: 75000
+});
+
+hooks[1] = Hook({
+    target: analyticsContract,
+    callData: abi.encodeWithSignature("recordTrade(uint256)", tradeVolume),
+    gasLimit: 50000
+});
+
+hooks[2] = Hook({
+    target: notificationContract,
+    callData: abi.encodeWithSignature("notifyTrader(address)", trader),
+    gasLimit: 30000
+});
+```
+
+### Empty Call Data Hook
+
+```solidity
+// Hook with empty call data (e.g., for triggering fallback function)
+Hook memory hook = Hook({
+    target: receiverContract,
+    callData: bytes(""),
+    gasLimit: 21000
+});
+```
+
+### Using Selector for Efficiency
+
+```solidity
+// More gas-efficient encoding using selector
+Hook memory hook = Hook({
+    target: stakingContract,
+    callData: abi.encodeWithSelector(
+        IStaking.stake.selector,
+        stakeAmount,
+        duration
+    ),
+    gasLimit: 80000
+});
+```
+
+## Gas Limit Considerations
+
+<Note>
+  When setting `gasLimit`, remember that due to the EVM's 63/64 rule for gas forwarding, the actual available gas to the hook may be slightly less than specified.
+</Note>
+
+### Calculating Gas Limits
+
+1. **Estimate execution cost**: Test your hook function to determine typical gas usage
+2. **Add buffer**: Include ~10-20% extra gas as a safety margin
+3. **Account for forwarding**: The trampoline uses `gasleft() * 63 / 64` to calculate available gas
+4. **Consider revert scenarios**: Failed hooks don't block settlement, but they consume their gas limit
+
+```solidity
+// Example: Function uses ~45,000 gas
+// Add 20% buffer: 45,000 * 1.2 = 54,000
+// Round up for safety: 55,000
+Hook memory hook = Hook({
+    target: myContract,
+    callData: abi.encodeWithSignature("myFunction()"),
+    gasLimit: 55000
+});
+```
+
+## Common Patterns
+
+### Pre-Settlement Hook
+
+```solidity
+// Execute logic before settlement completes
+Hook memory preHook = Hook({
+    target: userContract,
+    callData: abi.encodeWithSignature(
+        "beforeSettle(address,uint256)",
+        sellToken,
+        sellAmount
+    ),
+    gasLimit: 100000
+});
+```
+
+### Post-Settlement Hook
+
+```solidity
+// Execute logic after settlement completes
+Hook memory postHook = Hook({
+    target: userContract,
+    callData: abi.encodeWithSignature(
+        "afterSettle(address,uint256)",
+        buyToken,
+        buyAmount
+    ),
+    gasLimit: 100000
+});
+```
+
+### Conditional Hook
+
+```solidity
+// Hook that may perform different actions based on state
+Hook memory conditionalHook = Hook({
+    target: smartContract,
+    callData: abi.encodeWithSignature(
+        "handleTrade(address,address,uint256)",
+        sellToken,
+        buyToken,
+        amount
+    ),
+    gasLimit: 150000
+});
+```
+
+## Best Practices
+
+<Warning>
+  Always test your hooks thoroughly before using them in production. A hook that reverts due to insufficient gas or errors will not block the settlement, but it also won't execute its intended logic.
+</Warning>
+
+1. **Test gas usage**: Deploy and test hooks on testnets to measure actual gas consumption
+2. **Handle reverts gracefully**: Design hook targets to handle failures without breaking functionality
+3. **Minimize complexity**: Keep hook logic simple to reduce gas costs and failure risk
+4. **Validate inputs**: Ensure the hook target validates all parameters it receives
+5. **Use events**: Emit events from hook targets to track execution and debug issues
+
+## Related
+
+- [HooksTrampoline Contract](/api/hooks-trampoline) - Contract API reference
+- [Errors](/api/errors) - Error types and handling
+- [Usage Guide](/usage) - Implementation guide

@@ -1,0 +1,504 @@
+---
+title: Usage
+description: Learn how to use Hooks Trampoline to execute custom hooks in CoW Protocol settlements
+---
+
+Hooks Trampoline enables traders to execute custom Ethereum calls atomically within CoW Protocol settlements. This guide covers creating hooks, understanding execution flow, and implementing best practices.
+
+## Understanding Hook Architecture
+
+The trampoline contract protects the protocol by:
+
+- **Isolated execution context**: Hooks run from the trampoline's address, not the privileged settlement contract
+- **Gas limit enforcement**: Each hook specifies a maximum gas limit to prevent excessive consumption
+- **Revert tolerance**: Individual hook failures don't cause the entire settlement to fail
+
+<Frame>
+  ```mermaid
+  sequenceDiagram
+      participant Solver
+      participant Settlement
+      participant HooksTrampoline
+      participant Hook
+
+      Solver->>Settlement: settle
+      activate Settlement
+
+      Settlement->>HooksTrampoline: execute
+      activate HooksTrampoline
+      loop pre-hooks
+          HooksTrampoline->>Hook: call
+          activate Hook
+          Hook->>HooksTrampoline: return/revert
+          deactivate Hook
+      end
+      HooksTrampoline->>Settlement: return
+      deactivate HooksTrampoline
+
+      Settlement->>Settlement: swap
+
+      Settlement->>HooksTrampoline: execute
+      activate HooksTrampoline
+      loop post-hooks
+          HooksTrampoline->>Hook: call
+          activate Hook
+          Hook->>HooksTrampoline: return/revert
+          deactivate Hook
+      end
+      HooksTrampoline->>Settlement: return
+      deactivate HooksTrampoline
+
+      Settlement->>Solver: return
+      deactivate Settlement
+  ```
+</Frame>
+
+## Hook Structure
+
+Each hook is defined using the `Hook` struct:
+
+```solidity Hook Struct
+struct Hook {
+    address target;      // Contract address to call
+    bytes callData;      // Encoded function call data
+    uint256 gasLimit;    // Maximum gas allowed for this hook
+}
+```
+
+### Creating a Hook
+
+Here's how to create a hook that calls a function on a target contract:
+
+<CodeGroup>
+```solidity Basic Hook
+import {HooksTrampoline} from "./HooksTrampoline.sol";
+
+// Create a single hook
+HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+hooks[0] = HooksTrampoline.Hook({
+    target: address(myContract),
+    callData: abi.encodeCall(MyContract.myFunction, (arg1, arg2)),
+    gasLimit: 50000
+});
+```
+
+```solidity Multiple Hooks
+// Create multiple hooks executed in order
+HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](3);
+
+hooks[0] = HooksTrampoline.Hook({
+    target: address(counter),
+    callData: abi.encodeCall(Counter.increment, ()),
+    gasLimit: 50000
+});
+
+hooks[1] = HooksTrampoline.Hook({
+    target: address(approver),
+    callData: abi.encodeCall(Approver.approveToken, (tokenAddress, spender)),
+    gasLimit: 75000
+});
+
+hooks[2] = HooksTrampoline.Hook({
+    target: address(notifier),
+    callData: abi.encodeCall(Notifier.notify, ("Trade completed")),
+    gasLimit: 30000
+});
+```
+</CodeGroup>
+
+## Executing Hooks
+
+Hooks are executed by calling the `execute()` function from the settlement contract:
+
+```solidity Execute Function
+function execute(Hook[] calldata hooks) external onlySettlement
+```
+
+### Settlement-Only Execution
+
+The trampoline enforces that only the settlement contract can execute hooks:
+
+```solidity src/HooksTrampoline.sol:32-37
+modifier onlySettlement() {
+    if (msg.sender != settlement) {
+        revert NotASettlement();
+    }
+    _;
+}
+```
+
+<Warning>
+  Direct calls to `execute()` from any address other than the settlement contract will revert with `NotASettlement()` error.
+</Warning>
+
+### Example: Settlement Integration
+
+```solidity Settlement Contract Integration
+contract MySettlement {
+    HooksTrampoline public immutable trampoline;
+    
+    constructor(address trampolineAddress) {
+        trampoline = HooksTrampoline(trampolineAddress);
+    }
+    
+    function settle(
+        /* settlement parameters */,
+        HooksTrampoline.Hook[] calldata preHooks,
+        HooksTrampoline.Hook[] calldata postHooks
+    ) external {
+        // Execute pre-hooks before the swap
+        if (preHooks.length > 0) {
+            trampoline.execute(preHooks);
+        }
+        
+        // Perform the swap
+        performSwap();
+        
+        // Execute post-hooks after the swap
+        if (postHooks.length > 0) {
+            trampoline.execute(postHooks);
+        }
+    }
+}
+```
+
+## Hook Implementation
+
+When building contracts that serve as hook targets, you can verify they're being called during a settlement:
+
+```solidity Hook Contract Example
+contract MyHook {
+    address public immutable HOOKS_TRAMPOLINE;
+    
+    constructor(address trampoline) {
+        HOOKS_TRAMPOLINE = trampoline;
+    }
+    
+    function executeAction() external {
+        // Verify this is being called from a settlement
+        require(
+            msg.sender == HOOKS_TRAMPOLINE,
+            "not a settlement"
+        );
+        
+        // Hook logic here
+        // ...
+    }
+}
+```
+
+<Note>
+  This pattern allows hook implementations to be semi-permissioned, ensuring they only execute as part of legitimate settlements.
+</Note>
+
+## Gas Limit Best Practices
+
+Setting appropriate gas limits is critical for both security and efficiency.
+
+### How Gas Limits Work
+
+The trampoline forwards gas using the EVM's `call` opcode with a specified gas limit:
+
+```solidity src/HooksTrampoline.sol:70
+(bool success,) = hook.target.call{gas: hook.gasLimit}(hook.callData);
+```
+
+### Gas Forwarding Mechanics
+
+The `call` opcode forwards at most 63/64th of available gas. The trampoline checks available gas before each hook:
+
+```solidity src/HooksTrampoline.sol:63-68
+// A call forwards all but 1/64th of the available gas. The
+// math is used as a heuristic to account for this.
+uint256 forwardedGas = gasleft() * 63 / 64;
+if (forwardedGas < hook.gasLimit) {
+    revertByWastingGas();
+}
+```
+
+<Warning>
+  If there's insufficient gas to forward the requested `gasLimit`, the transaction reverts by consuming all remaining gas. This prevents partial execution issues.
+</Warning>
+
+### Setting Gas Limits
+
+<Steps>
+  <Step title="Measure function gas usage">
+    Use Foundry to measure your hook's gas consumption:
+    
+    ```solidity Test Gas Usage
+    function test_MeasureGas() public {
+        uint256 gasBefore = gasleft();
+        myHook.executeAction();
+        uint256 gasUsed = gasBefore - gasleft();
+        
+        console.log("Gas used:", gasUsed);
+    }
+    ```
+  </Step>
+
+  <Step title="Add overhead buffer">
+    Add overhead for:
+    - EVM call costs (~700 gas for warm, ~2600 for cold)
+    - Storage access costs
+    - Solidity runtime setup
+    
+    ```solidity
+    uint256 measuredGas = 45000;
+    uint256 buffer = 5000;
+    uint256 gasLimit = measuredGas + buffer; // 50000
+    ```
+  </Step>
+
+  <Step title="Consider worst-case scenarios">
+    Account for variable gas costs:
+    - Cold vs. warm storage access
+    - Varying array lengths
+    - Conditional logic branches
+  </Step>
+</Steps>
+
+### Gas Limit Examples from Tests
+
+<CodeGroup>
+```solidity Simple Counter (50K gas)
+// Simple state changes typically need 50,000 gas
+HooksTrampoline.Hook({
+    target: address(counter),
+    callData: abi.encodeCall(Counter.increment, ()),
+    gasLimit: 50000
+})
+```
+
+```solidity Gas Recording (133K gas)
+// Operations that read gas state need more overhead
+HooksTrampoline.Hook({
+    target: address(gasRecorder),
+    callData: abi.encodeCall(GasRecorder.record, ()),
+    gasLimit: 133700
+})
+```
+
+```solidity Ordered Operations (25K gas)
+// Lightweight operations can use lower limits
+HooksTrampoline.Hook({
+    target: address(order),
+    callData: abi.encodeCall(CallInOrder.called, (i)),
+    gasLimit: 25000
+})
+```
+</CodeGroup>
+
+## Handling Reverts
+
+One of the key features of Hooks Trampoline is its ability to handle hook failures gracefully.
+
+### Revert Behavior
+
+When a hook reverts:
+1. The revert is caught by the trampoline
+2. The trampoline continues executing remaining hooks
+3. The settlement proceeds normally
+
+```solidity src/HooksTrampoline.sol:70-74
+(bool success,) = hook.target.call{gas: hook.gasLimit}(hook.callData);
+
+// In order to prevent custom hooks from DoS-ing settlements, we
+// explicitly allow them to revert.
+success;
+```
+
+### Example: Partial Hook Failure
+
+This example shows how the trampoline handles a reverting hook:
+
+```solidity Revert Tolerance Test
+Counter counter = new Counter();
+Reverter reverter = new Reverter();
+
+HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](3);
+
+// First hook succeeds
+hooks[0] = HooksTrampoline.Hook({
+    target: address(counter),
+    callData: abi.encodeCall(Counter.increment, ()),
+    gasLimit: 50000
+});
+
+// Second hook reverts
+hooks[1] = HooksTrampoline.Hook({
+    target: address(reverter),
+    callData: abi.encodeCall(Reverter.doRevert, ("boom")),
+    gasLimit: 50000
+});
+
+// Third hook still executes and succeeds
+hooks[2] = HooksTrampoline.Hook({
+    target: address(counter),
+    callData: abi.encodeCall(Counter.increment, ()),
+    gasLimit: 50000
+});
+
+vm.prank(settlement);
+trampoline.execute(hooks);
+
+// Counter was incremented twice despite middle hook failing
+assert(counter.value() == 2);
+```
+
+<Note>
+  This behavior prevents individual user hooks from causing entire settlements to fail, protecting other traders' orders.
+</Note>
+
+## Execution Order
+
+Hooks are executed sequentially in the order they appear in the array:
+
+```solidity src/HooksTrampoline.sol:60-76
+Hook calldata hook;
+for (uint256 i; i < hooks.length; ++i) {
+    hook = hooks[i];
+    // Execute hook
+    (bool success,) = hook.target.call{gas: hook.gasLimit}(hook.callData);
+    success;
+}
+```
+
+<Warning>
+  If hooks depend on each other's state changes, ensure they're ordered correctly. A reverting hook will not execute its state changes, potentially affecting subsequent hooks.
+</Warning>
+
+## Security Considerations
+
+### Protected Settlement Context
+
+The trampoline prevents hooks from accessing the settlement contract's privileged context:
+
+- ✅ Hooks execute from trampoline's address
+- ✅ Cannot access settlement contract's token balances
+- ✅ Cannot call privileged settlement functions
+- ✅ Cannot interfere with other orders
+
+### Gas Consumption Protection
+
+The gas limit mechanism prevents malicious or buggy hooks from consuming excessive gas:
+
+```solidity Out of Gas Handling
+// If a hook hits an INVALID opcode, gas consumption is capped
+HooksTrampoline.Hook memory hook = HooksTrampoline.Hook({
+    target: address(gasGuzzler),
+    callData: abi.encodeCall(GasGuzzler.consumeAll, ()),
+    gasLimit: 133700  // Maximum gas this hook can use
+});
+```
+
+Without gas limits, an `INVALID` opcode would consume 63/64ths of all transaction gas, making settlements extremely expensive.
+
+### Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always set reasonable gas limits">
+    - Measure actual gas usage in tests
+    - Add 10-20% buffer for variations
+    - Never set arbitrarily high limits
+  </Accordion>
+
+  <Accordion title="Handle hook failures gracefully">
+    - Don't assume all hooks will succeed
+    - Design hooks to be idempotent when possible
+    - Consider using post-hooks for critical operations
+  </Accordion>
+
+  <Accordion title="Validate hook targets">
+    - Ensure target contracts are trusted
+    - Verify hook implementations before deployment
+    - Consider using allowlists for critical operations
+  </Accordion>
+
+  <Accordion title="Test with insufficient gas scenarios">
+    - Test hooks with exact gas limits
+    - Test with insufficient available gas
+    - Verify settlement continues after hook failures
+  </Accordion>
+</AccordionGroup>
+
+## Complete Example
+
+Here's a complete example showing a custom hook for token approvals:
+
+```solidity Complete Hook Example
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {HooksTrampoline} from "./HooksTrampoline.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract TokenApprovalHook {
+    address public immutable HOOKS_TRAMPOLINE;
+    
+    constructor(address trampoline) {
+        HOOKS_TRAMPOLINE = trampoline;
+    }
+    
+    /// @notice Approve a token for a spender
+    /// @dev Only callable through HooksTrampoline during a settlement
+    function approveToken(
+        address token,
+        address spender,
+        uint256 amount
+    ) external {
+        require(
+            msg.sender == HOOKS_TRAMPOLINE,
+            "TokenApprovalHook: not a settlement"
+        );
+        
+        IERC20(token).approve(spender, amount);
+    }
+}
+
+// Usage in settlement
+contract Settlement {
+    HooksTrampoline public immutable trampoline;
+    TokenApprovalHook public immutable approvalHook;
+    
+    constructor(address trampolineAddress, address approvalHookAddress) {
+        trampoline = HooksTrampoline(trampolineAddress);
+        approvalHook = TokenApprovalHook(approvalHookAddress);
+    }
+    
+    function executeTradeWithApproval(
+        address token,
+        address spender,
+        uint256 amount
+    ) external {
+        // Create pre-hook for token approval
+        HooksTrampoline.Hook[] memory preHooks = new HooksTrampoline.Hook[](1);
+        preHooks[0] = HooksTrampoline.Hook({
+            target: address(approvalHook),
+            callData: abi.encodeCall(
+                TokenApprovalHook.approveToken,
+                (token, spender, amount)
+            ),
+            gasLimit: 75000
+        });
+        
+        // Execute pre-hooks
+        trampoline.execute(preHooks);
+        
+        // Perform trade
+        // ...
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api/hooks-trampoline">
+    Explore the complete API documentation
+  </Card>
+  
+  <Card title="Architecture" icon="code" href="/architecture/security">
+    Learn about the security model and architecture
+  </Card>
+</CardGroup>

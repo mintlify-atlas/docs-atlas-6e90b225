@@ -1,0 +1,363 @@
+---
+title: Deployment
+description: Deploying Hooks Trampoline with Cannon
+---
+
+Hooks Trampoline uses [Cannon](https://usecannon.com/) to generate deployable artifacts. The deployment on live networks is handled through the [cowprotocol/deployments](https://github.com/cowprotocol/deployments) repository.
+
+## Overview
+
+Cannon provides:
+
+- Deterministic CREATE2 deployments
+- Deployment manifest with ABIs and addresses
+- Integration with existing CoW Protocol packages
+- Versioned package management
+
+## Building the Cannon Package
+
+<Steps>
+  <Step title="Install dependencies">
+    The project uses pnpm for package management:
+
+    ```bash
+    pnpm install
+    ```
+  </Step>
+
+  <Step title="Build the package">
+    Run the Cannon build command:
+
+    ```bash
+    yarn build:cannon
+    ```
+
+    Or using pnpm directly:
+
+    ```bash
+    pnpm cannon build --wipe
+    ```
+
+    This will:
+    - Recompile the Solidity contracts as needed
+    - Generate a deployment manifest
+    - Include Solidity input JSON
+    - Include default settings and ABIs
+    - Calculate predicted deployment addresses
+  </Step>
+
+  <Step title="Verify the output">
+    Check the generated artifacts in the `cannon/` directory:
+
+    ```bash
+    ls -la cannon/
+    ```
+
+    You should see deployment manifests and configuration files.
+  </Step>
+</Steps>
+
+## Cannonfile Configuration
+
+The `cannonfile.toml` defines the deployment configuration:
+
+```toml cannonfile.toml
+name = "cow-hooks-trampoline"
+version = "1.0.0"
+
+# Set the package reference for the settlement contract
+[var.pkg]
+cowSettlementPkg = "cow-settlement:2.0.2"
+
+# Pull in cow-settlement package to get the current settlement address
+[pull.cow]
+source = "<%= settings.cowSettlementPkg %>"
+
+[var.main]
+salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+cowSettlement = "<%= cow.Settlement.address %>"
+
+[deploy.HooksTrampoline]
+artifact = "HooksTrampoline"
+create2 = true
+ifExists = "continue"
+salt = "<%= settings.salt %>"
+args = ["<%= settings.cowSettlement %>"]
+```
+
+### Key Configuration Options
+
+#### Package Dependencies
+
+```toml
+[var.pkg]
+cowSettlementPkg = "cow-settlement:2.0.2"
+
+[pull.cow]
+source = "<%= settings.cowSettlementPkg %>"
+```
+
+Pulls the `cow-settlement` package to get the settlement contract address.
+
+#### CREATE2 Deployment
+
+```toml
+[deploy.HooksTrampoline]
+artifact = "HooksTrampoline"
+create2 = true
+salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+```
+
+- `create2 = true` - Enables deterministic CREATE2 deployment
+- `salt` - Salt value for CREATE2 address calculation
+- Ensures same address across all networks
+
+#### Constructor Arguments
+
+```toml
+args = ["<%= settings.cowSettlement %>"]
+```
+
+Passes the settlement contract address from the pulled package as the constructor argument.
+
+#### Deployment Strategy
+
+```toml
+ifExists = "continue"
+```
+
+If the contract already exists at the address, continue without redeploying.
+
+## Publishing the Package
+
+<Steps>
+  <Step title="Check version">
+    Verify the version in `cannonfile.toml` is correct:
+
+    ```toml
+    version = "1.0.0"
+    ```
+
+    Update if necessary before publishing.
+  </Step>
+
+  <Step title="Build the package">
+    Ensure artifacts are up to date:
+
+    ```bash
+    yarn build:cannon
+    ```
+  </Step>
+
+  <Step title="Publish to Cannon registry">
+    You need:
+    - An EOA with permission on the `cow-settlement` package
+    - 0.0025 ETH + gas on Optimism Mainnet
+
+    Run the publish command:
+
+    ```bash
+    yarn cannon:publish
+    ```
+
+    This executes:
+
+    ```bash
+    pnpm cannon publish cow-hooks-trampoline --chain-id 13370 --registry-chain-id 10
+    ```
+
+    Where:
+    - `--chain-id 13370` - Anvil network used by Cannon to prepare packages
+    - `--registry-chain-id 10` - Optimism Mainnet where the registry is deployed
+  </Step>
+
+  <Step title="Select network and provide key">
+    You will be prompted for:
+    1. **Publishing network** - Select "Optimism"
+    2. **Private key** - Enter the private key of the authorized account
+  </Step>
+
+  <Step title="Record deployment artifacts">
+    After publishing, record the deployment data:
+
+    ```bash
+    yarn cannon:record
+    ```
+
+    This runs:
+
+    ```bash
+    pnpm cannon inspect cow-hooks-trampoline:latest --chain-id 13370 --out deploy-json > cannon/deploy.json
+    pnpm cannon inspect cow-hooks-trampoline:latest --chain-id 13370 --out misc-json > cannon/misc.json
+    ```
+
+    If you don't see changes in the `cannon/` directory, you may need to run this command manually.
+  </Step>
+
+  <Step title="Bump version">
+    After successful publishing, bump the patch version in `cannonfile.toml`:
+
+    ```toml
+    version = "1.0.1"
+    ```
+
+    This ensures the next publish uses a new version.
+  </Step>
+
+  <Step title="Commit changes">
+    Commit all changes including:
+    - Updated `cannonfile.toml` version
+    - Generated files in `cannon/` directory
+
+    ```bash
+    git add cannonfile.toml cannon/
+    git commit -m "Publish cow-hooks-trampoline v1.0.0"
+    ```
+
+    Create a PR for review. A CI job will verify consistency between the published package and repository files.
+  </Step>
+</Steps>
+
+## Package Scripts
+
+The `package.json` defines several useful scripts:
+
+```json package.json
+{
+  "scripts": {
+    "build": "pnpm build:cannon",
+    "build:cannon": "pnpm cannon build --wipe",
+    "cannon:publish": "pnpm cannon publish cow-hooks-trampoline --chain-id 13370 --registry-chain-id 10 && pnpm cannon:record",
+    "cannon:record": "pnpm cannon inspect cow-hooks-trampoline:latest --chain-id 13370 --out deploy-json > cannon/deploy.json && pnpm cannon inspect cow-hooks-trampoline:latest --chain-id 13370 --out misc-json > cannon/misc.json"
+  }
+}
+```
+
+### Script Details
+
+| Script | Description |
+|--------|-------------|
+| `build` | Alias for `build:cannon` |
+| `build:cannon` | Builds Cannon package with `--wipe` flag |
+| `cannon:publish` | Publishes package and records artifacts |
+| `cannon:record` | Exports deployment data to JSON files |
+
+## CREATE2 Deployment
+
+CREATE2 ensures the HooksTrampoline contract has the same address on all networks:
+
+1. **Deterministic address** - The address is calculated from:
+   - Deployer address
+   - Salt value
+   - Contract bytecode and constructor arguments
+
+2. **Benefits**:
+   - Same address across all EVM networks
+   - Predictable before deployment
+   - Easier integration and verification
+
+3. **Salt value**:
+   ```toml
+   salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+   ```
+   Change this to get a different address if needed.
+
+## Integration with CoW Protocol
+
+The HooksTrampoline package integrates with the CoW Protocol ecosystem:
+
+### Settlement Contract Dependency
+
+```toml
+[var.pkg]
+cowSettlementPkg = "cow-settlement:2.0.2"
+
+[pull.cow]
+source = "<%= settings.cowSettlementPkg %>"
+```
+
+Pulls the specified version of `cow-settlement` to get the settlement address.
+
+### Constructor Dependency
+
+```toml
+args = ["<%= settings.cowSettlement %>"]
+```
+
+The trampoline constructor requires the settlement contract address, which is automatically pulled from the `cow-settlement` package.
+
+## Deployment to Production Networks
+
+Actual deployment to production networks is handled through the [cowprotocol/deployments](https://github.com/cowprotocol/deployments) repository:
+
+1. **Staging deployment**:
+   - Test on testnets (Sepolia, Goerli)
+   - Verify contract behavior
+   - Run integration tests
+
+2. **Production deployment**:
+   - Deploy to mainnet networks (Ethereum, Gnosis Chain, Arbitrum, etc.)
+   - Verify contracts on Etherscan
+   - Update documentation with addresses
+
+3. **Package versioning**:
+   - Follow semantic versioning
+   - Tag releases in git
+   - Publish to Cannon registry
+
+## Browsing Deployed Contracts
+
+View deployed contracts and packages:
+
+- **Deployments repository**: [github.com/cowprotocol/deployments](https://github.com/cowprotocol/deployments)
+- **Cannon Explorer**: [usecannon.com/packages/cow-omnibus](https://usecannon.com/packages/cow-omnibus)
+- **Package name**: `cow-hooks-trampoline`
+
+## Verification
+
+After deployment, verify the contract on block explorers:
+
+```bash
+forge verify-contract \
+  --chain-id <CHAIN_ID> \
+  --constructor-args $(cast abi-encode "constructor(address)" <SETTLEMENT_ADDRESS>) \
+  <CONTRACT_ADDRESS> \
+  src/HooksTrampoline.sol:HooksTrampoline
+```
+
+Or use Cannon's built-in verification during publish.
+
+## Troubleshooting
+
+### Build fails with "out of gas"
+
+Increase the gas limit in your Foundry configuration:
+
+```toml foundry.toml
+[profile.default]
+gas_limit = "18446744073709551615"
+```
+
+### Publish fails with "not authorized"
+
+Ensure your account has permission on the `cow-settlement` package. Contact the CoW Protocol team to request access.
+
+### CREATE2 deployment fails
+
+If the contract already exists at the address:
+- Change the salt value in `cannonfile.toml`
+- Or use `ifExists = "continue"` to skip redeployment
+
+### Record command doesn't generate files
+
+Run the inspect commands manually:
+
+```bash
+pnpm cannon inspect cow-hooks-trampoline:latest \
+  --chain-id 13370 \
+  --out deploy-json > cannon/deploy.json
+
+pnpm cannon inspect cow-hooks-trampoline:latest \
+  --chain-id 13370 \
+  --out misc-json > cannon/misc.json
+```

@@ -1,0 +1,393 @@
+---
+title: Testing
+description: Running tests and writing new tests for Hooks Trampoline
+---
+
+Hooks Trampoline uses [Foundry](https://book.getfoundry.sh/) for testing. The test suite ensures that the trampoline contract correctly enforces gas limits, allows hook reverts, and protects the settlement contract.
+
+## Running Tests
+
+Run all tests with Foundry:
+
+```bash
+forge test
+```
+
+For verbose output with stack traces:
+
+```bash
+forge test -vvv
+```
+
+## Test Structure
+
+The test suite includes two main test contracts:
+
+- `HooksTrampoline.t.sol` - Core functionality tests
+- `GasLimitEnforcement.t.sol` - Gas enforcement edge cases
+
+### Core Test Contract
+
+The main test contract sets up a mock settlement address and deploys the trampoline:
+
+```solidity test/HooksTrampoline.t.sol
+contract HooksTrampolineTest is Test {
+    address public settlement;
+    HooksTrampoline public trampoline;
+
+    function setUp() public {
+        settlement = 0x4242424242424242424242424242424242424242;
+        trampoline = new HooksTrampoline(settlement);
+    }
+}
+```
+
+## Key Test Cases
+
+### Authorization Tests
+
+The trampoline must only be callable from the settlement contract:
+
+```solidity
+function test_RevertsWhenNotCalledFromSettlement() public {
+    HooksTrampoline.Hook[] memory hooks;
+
+    vm.expectRevert(HooksTrampoline.NotASettlement.selector);
+    trampoline.execute(hooks);
+}
+```
+
+### Gas Limit Enforcement
+
+Tests verify that hooks receive the specified gas limit:
+
+```solidity
+function test_SpecifiesGasLimit() public {
+    GasRecorder gas = new GasRecorder();
+    uint256 gasLimit = 133700;
+
+    HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+    hooks[0] = HooksTrampoline.Hook({
+        target: address(gas),
+        callData: abi.encodeCall(GasRecorder.record, ()),
+        gasLimit: gasLimit
+    });
+
+    vm.prank(settlement);
+    trampoline.execute(hooks);
+
+    assertApproxEqAbs(gas.value(), gasLimit, 200);
+}
+```
+
+### Revert Handling
+
+Hooks can revert without failing the entire transaction:
+
+```solidity
+function test_AllowsReverts() public {
+    Counter counter = new Counter();
+    Reverter reverter = new Reverter();
+
+    HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](3);
+    hooks[0] = HooksTrampoline.Hook({
+        target: address(counter),
+        callData: abi.encodeCall(Counter.increment, ()),
+        gasLimit: 50000
+    });
+    hooks[1] = HooksTrampoline.Hook({
+        target: address(reverter),
+        callData: abi.encodeCall(Reverter.doRevert, ("boom")),
+        gasLimit: 50000
+    });
+    hooks[2] = HooksTrampoline.Hook({
+        target: address(counter),
+        callData: abi.encodeCall(Counter.increment, ()),
+        gasLimit: 50000
+    });
+
+    vm.prank(settlement);
+    trampoline.execute(hooks);
+
+    // Counter should be 2, even though middle hook reverted
+    assertEq(counter.value(), 2);
+}
+```
+
+### Execution Order
+
+Hooks must execute in the specified order:
+
+```solidity
+function test_ExecutesHooksInOrder() public {
+    CallInOrder order = new CallInOrder();
+
+    HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](10);
+    for (uint256 i = 0; i < hooks.length; i++) {
+        hooks[i] = HooksTrampoline.Hook({
+            target: address(order),
+            callData: abi.encodeCall(CallInOrder.called, (i)),
+            gasLimit: 25000
+        });
+    }
+
+    vm.prank(settlement);
+    trampoline.execute(hooks);
+
+    assertEq(order.count(), hooks.length);
+}
+```
+
+### Out of Gas Protection
+
+The trampoline protects against excessive gas consumption:
+
+```solidity
+function test_HandlesOutOfGas() public {
+    Hummer hummer = new Hummer();
+
+    HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+    hooks[0] = HooksTrampoline.Hook({
+        target: address(hummer),
+        callData: abi.encodeCall(Hummer.drive, ()),
+        gasLimit: 133700
+    });
+
+    vm.prank(settlement);
+    uint256 gas = gasleft();
+    trampoline.execute(hooks);
+    uint256 gasUsed = gas - gasleft();
+    uint256 callOverhead = (2600 + 700) * 2;
+
+    assertApproxEqAbs(gasUsed, hooks[0].gasLimit + callOverhead, 500);
+}
+```
+
+## Test Helper Contracts
+
+The test suite includes several helper contracts to test different scenarios:
+
+### GasRecorder
+
+Records the gas available when called:
+
+```solidity
+contract GasRecorder {
+    uint256 public value;
+
+    function record() external {
+        value = gasleft();
+    }
+}
+```
+
+### Counter
+
+Simple counter for testing successful hook execution:
+
+```solidity
+contract Counter {
+    uint256 public value;
+
+    function increment() external {
+        value++;
+    }
+}
+```
+
+### Reverter
+
+Always reverts with a custom message:
+
+```solidity
+contract Reverter {
+    function doRevert(string calldata message) external pure {
+        revert(message);
+    }
+}
+```
+
+### CallInOrder
+
+Verifies hooks are called in sequence:
+
+```solidity
+contract CallInOrder {
+    uint256 public count;
+
+    function called(uint256 index) external {
+        require(count++ == index, "out of order");
+    }
+}
+```
+
+### Hummer
+
+Consumes excessive gas to test gas limits:
+
+```solidity
+contract Hummer {
+    function drive() external {
+        // Accesses high memory addresses to consume gas
+        uint256 n = type(uint256).max;
+        assembly {
+            sstore(0, mload(n))
+        }
+    }
+}
+```
+
+### GasCraver
+
+Requires a specific amount of gas to execute:
+
+```solidity
+contract GasCraver {
+    uint256 immutable gasLimit;
+    bool public stateChanged = false;
+
+    constructor(uint256 _gasLimit) {
+        gasLimit = _gasLimit;
+    }
+
+    function foo() external {
+        uint256 gas = gasleft();
+        require(gas > gasLimit, "I want more gas");
+        stateChanged = true;
+    }
+}
+```
+
+## Writing Tests for Custom Hooks
+
+<Steps>
+  <Step title="Create a test contract">
+    Inherit from `forge-std/Test.sol`:
+
+    ```solidity
+    import {Test} from "forge-std/Test.sol";
+    import {HooksTrampoline} from "../src/HooksTrampoline.sol";
+
+    contract CustomHookTest is Test {
+        HooksTrampoline public trampoline;
+        address public settlement;
+
+        function setUp() public {
+            settlement = address(0x42);
+            trampoline = new HooksTrampoline(settlement);
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Deploy your hook contract">
+    Deploy your custom hook in the test setup:
+
+    ```solidity
+    MyCustomHook public hook;
+
+    function setUp() public {
+        settlement = address(0x42);
+        trampoline = new HooksTrampoline(settlement);
+        hook = new MyCustomHook();
+    }
+    ```
+  </Step>
+
+  <Step title="Create hook arrays">
+    Build the hooks array with your test data:
+
+    ```solidity
+    function test_MyCustomHook() public {
+        HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+        hooks[0] = HooksTrampoline.Hook({
+            target: address(hook),
+            callData: abi.encodeCall(MyCustomHook.execute, (param1, param2)),
+            gasLimit: 100000
+        });
+
+        vm.prank(settlement);
+        trampoline.execute(hooks);
+
+        // Assert expected state changes
+        assertEq(hook.someValue(), expectedValue);
+    }
+    ```
+  </Step>
+
+  <Step title="Test gas limits">
+    Verify your hook respects gas limits:
+
+    ```solidity
+    function test_MyHookWithLowGas() public {
+        uint256 lowGasLimit = 5000;
+        HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+        hooks[0] = HooksTrampoline.Hook({
+            target: address(hook),
+            callData: abi.encodeCall(MyCustomHook.expensiveOperation, ()),
+            gasLimit: lowGasLimit
+        });
+
+        vm.prank(settlement);
+        trampoline.execute(hooks);
+
+        // Verify hook didn't complete expensive operation
+        assertEq(hook.operationCompleted(), false);
+    }
+    ```
+  </Step>
+
+  <Step title="Test authorization checks">
+    If your hook checks `msg.sender`, test it:
+
+    ```solidity
+    function test_HookRequiresTrampolineAsSender() public {
+        // Direct call should revert
+        vm.expectRevert("not from trampoline");
+        hook.execute(param1, param2);
+
+        // Call through trampoline should succeed
+        HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+        hooks[0] = HooksTrampoline.Hook({
+            target: address(hook),
+            callData: abi.encodeCall(MyCustomHook.execute, (param1, param2)),
+            gasLimit: 100000
+        });
+
+        vm.prank(settlement);
+        trampoline.execute(hooks);
+        // Should succeed
+    }
+    ```
+  </Step>
+</Steps>
+
+## Gas Limit Edge Cases
+
+The `GasLimitEnforcement.t.sol` file tests complex gas scenarios:
+
+```solidity
+function test_TrampolineWithSufficientGas() public gasPadded {
+    HooksTrampoline.Hook[] memory hooks = createHook(CRAVED_GAS + GAS_CRAVER_OVERHEAD);
+
+    vm.prank(settlement);
+    trampoline.execute{gas: limitForForwarding(CRAVED_GAS + GAS_CRAVER_OVERHEAD)}(hooks);
+
+    assertEq(gasCraver.stateChanged(), true, "Hook should execute successfully");
+}
+```
+
+Key constants for gas testing:
+
+- `TRAMPOLINE_OVERHEAD = 4_000` - Gas overhead before calling hook
+- `GAS_CRAVER_OVERHEAD = 117` - Gas used before checking gas limit
+- `BOUND_ON_GAS_COST = 60_000` - Maximum expected gas cost
+
+## Best Practices
+
+1. **Use `vm.prank(settlement)`** - Always call `execute()` from the settlement address
+2. **Test gas limits** - Verify hooks handle insufficient gas gracefully
+3. **Test reverts** - Ensure reverted hooks don't break other hooks
+4. **Test order** - Verify hooks execute in the correct sequence
+5. **Use helper contracts** - Create simple contracts to test specific behaviors
+6. **Test edge cases** - Include tests for out-of-gas and authorization failures

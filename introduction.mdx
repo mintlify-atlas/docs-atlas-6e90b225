@@ -1,0 +1,193 @@
+---
+title: Introduction
+description: Learn about Hooks Trampoline and how it protects CoW Protocol settlements
+mode: custom
+---
+
+<div className="relative overflow-hidden bg-gradient-to-br from-[#1a1d27] via-[#0f1117] to-[#1a1d27] dark:from-[#1a1d27] dark:via-[#0f1117] dark:to-[#1a1d27] py-20">
+  <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center [mask-image:linear-gradient(180deg,white,rgba(255,255,255,0))]"></div>
+  
+  <div className="relative max-w-6xl mx-auto px-6">
+    <div className="text-center">
+      <h1 className="text-5xl md:text-6xl font-bold text-white mb-6">
+        Hooks Trampoline
+      </h1>
+      <p className="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto mb-10">
+        A dedicated trampoline contract for executing user-specified hooks in CoW Protocol settlements safely and efficiently
+      </p>
+      <div className="flex flex-wrap gap-4 justify-center">
+        <a 
+          href="/installation" 
+          className="inline-flex items-center px-6 py-3 rounded-lg bg-[#7c7c7c] text-white font-semibold hover:bg-[#6a6a6a] transition-colors"
+        >
+          Get Started
+          <svg className="ml-2 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+        </a>
+        <a 
+          href="/api/hooks-trampoline" 
+          className="inline-flex items-center px-6 py-3 rounded-lg border border-white/30 bg-white/10 text-white font-semibold hover:bg-white/20 transition-colors"
+        >
+          API Reference
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+      Why Hooks Trampoline?
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+      Hooks Trampoline protects CoW Protocol settlements from malicious or poorly configured user hooks
+    </p>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-16">
+    <div className="p-6 rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27]">
+      <div className="w-12 h-12 rounded-lg bg-[#7c7c7c] flex items-center justify-center mb-4">
+        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+      </div>
+      <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3">
+        Security Isolation
+      </h3>
+      <p className="text-gray-600 dark:text-gray-400">
+        Executes hooks from an unprivileged context, preventing malicious hooks from accessing settlement contract funds or state
+      </p>
+    </div>
+
+    <div className="p-6 rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27]">
+      <div className="w-12 h-12 rounded-lg bg-[#7c7c7c] flex items-center justify-center mb-4">
+        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+      </div>
+      <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3">
+        Gas Protection
+      </h3>
+      <p className="text-gray-600 dark:text-gray-400">
+        Enforces gas limits on hook execution to prevent INVALID opcodes from consuming excessive gas and making settlements expensive
+      </p>
+    </div>
+
+    <div className="p-6 rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27]">
+      <div className="w-12 h-12 rounded-lg bg-[#7c7c7c] flex items-center justify-center mb-4">
+        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </div>
+      <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3">
+        Revert Tolerance
+      </h3>
+      <p className="text-gray-600 dark:text-gray-400">
+        Allows individual hooks to revert without failing the entire settlement, preventing DoS attacks on other orders
+      </p>
+    </div>
+
+    <div className="p-6 rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27]">
+      <div className="w-12 h-12 rounded-lg bg-[#7c7c7c] flex items-center justify-center mb-4">
+        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      </div>
+      <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3">
+        Settlement Access Control
+      </h3>
+      <p className="text-gray-600 dark:text-gray-400">
+        Only accepts calls from the CoW Protocol settlement contract, allowing hooks to verify they're part of a valid settlement
+      </p>
+    </div>
+  </div>
+
+  <div className="mb-16">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+      Quick Start
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+      Get started with Hooks Trampoline in minutes
+    </p>
+
+    <Steps>
+      <Step title="Install Foundry dependencies">
+        Clone the repository and install dependencies:
+        
+        ```bash
+        forge install
+        ```
+      </Step>
+
+      <Step title="Deploy the contract">
+        Deploy Hooks Trampoline with your settlement contract address:
+        
+        ```solidity
+        HooksTrampoline trampoline = new HooksTrampoline(settlementAddress);
+        ```
+      </Step>
+
+      <Step title="Create and execute hooks">
+        Define hooks and execute them through the trampoline:
+        
+        ```solidity
+        HooksTrampoline.Hook[] memory hooks = new HooksTrampoline.Hook[](1);
+        hooks[0] = HooksTrampoline.Hook({
+            target: hookContract,
+            callData: abi.encodeCall(MyHook.execute, ()),
+            gasLimit: 100000
+        });
+        
+        // Called from settlement contract
+        trampoline.execute(hooks);
+        ```
+      </Step>
+    </Steps>
+  </div>
+
+  <div>
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+      Explore the Documentation
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+      Learn more about Hooks Trampoline's architecture and how to use it effectively
+    </p>
+
+    <CardGroup cols={2}>
+      <Card title="How It Works" icon="gears" href="/how-it-works">
+        Understand the architecture and design decisions behind Hooks Trampoline
+      </Card>
+      <Card title="Security Model" icon="shield" href="/architecture/security">
+        Learn about the security guarantees and protection mechanisms
+      </Card>
+      <Card title="Gas Management" icon="gauge" href="/architecture/gas-management">
+        Discover how gas limits are enforced and why they matter
+      </Card>
+      <Card title="Testing" icon="flask" href="/development/testing">
+        Run the test suite and write tests for your own hooks
+      </Card>
+    </CardGroup>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="p-8 rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27] text-center">
+    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+      Ready to integrate Hooks Trampoline?
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 mb-6 max-w-2xl mx-auto">
+      Follow our installation guide to deploy and integrate Hooks Trampoline into your CoW Protocol settlement workflow
+    </p>
+    <a 
+      href="/installation" 
+      className="inline-flex items-center px-6 py-3 rounded-lg bg-[#7c7c7c] text-white font-semibold hover:bg-[#6a6a6a] transition-colors"
+    >
+      Get Started
+      <svg className="ml-2 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+      </svg>
+    </a>
+  </div>
+</div>
